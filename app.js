@@ -1,0 +1,209 @@
+const DB='poladent_feedback_enterprise_v4_firebase_real';
+// FIREBASE CLOUD - POLADENT
+const firebaseConfig = {
+  apiKey: "AIzaSyA75nG58EjY324JB6uXraSl56MjJJ2pA4E",
+  authDomain: "control-de-encuesta-poladent.firebaseapp.com",
+  databaseURL: "https://control-de-encuesta-poladent-default-rtdb.firebaseio.com",
+  projectId: "control-de-encuesta-poladent",
+  storageBucket: "control-de-encuesta-poladent.firebasestorage.app",
+  messagingSenderId: "626095482746",
+  appId: "1:626095482746:web:a70c2c85ab92b826da58c3"
+};
+let firebaseReady=false, cloudReady=false, dbRef=null, savingCloud=false;
+function firebaseInit(){
+  try{
+    if(typeof firebase==='undefined') return console.warn('Firebase SDK no cargado, usando modo local.');
+    if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    dbRef=firebase.database().ref('poladentFeedbackEnterpriseV4');
+    firebaseReady=true;
+    dbRef.on('value',snap=>{
+      const cloud=snap.val();
+      if(cloud){
+        if(savingCloud) return;
+        data=normalizeData(cloud);
+        localStorage.setItem(DB,JSON.stringify(data));
+        cloudReady=true;
+        if($('#content')) renderAdmin();
+        if($('#clientContent')) renderStep();
+      }else{
+        cloudReady=true;
+        save();
+      }
+    },err=>{console.warn('Firebase error:',err); cloudReady=false;});
+  }catch(e){console.warn('Firebase init error',e)}
+}
+function saveCloud(){
+  localStorage.setItem(DB,JSON.stringify(data));
+  if(firebaseReady && dbRef){
+    savingCloud=true;
+    dbRef.set(data).then(()=>{savingCloud=false;}).catch(e=>{savingCloud=false; console.warn('No se pudo guardar en Firebase',e); alert('Aviso: no se pudo guardar en Firebase. Revisa reglas/conexión.');});
+  }
+}
+
+async function uploadPhotoFile(input,folder){
+  // Versión Firebase sin Storage: comprime la foto y la guarda como Base64 en Realtime Database.
+  const f=input?.files?.[0];
+  if(!f) return null;
+  return await imageFileToBase64(f,520,0.78);
+}
+function imageFileToBase64(file,maxSize=360,quality=0.72){
+  return new Promise((resolve,reject)=>{
+    if(!file) return resolve(null);
+    if(!file.type || !file.type.startsWith('image/')) return reject(new Error('El archivo seleccionado no es una imagen.'));
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error('No se pudo leer la foto.'));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error('La foto no se pudo cargar. Prueba con otra imagen.'));
+      img.onload=()=>{
+        try{
+          // Recorte cuadrado centrado para que todas las fotos queden iguales.
+          const side=Math.min(img.width,img.height);
+          const sx=Math.max(0,Math.round((img.width-side)/2));
+          const sy=Math.max(0,Math.round((img.height-side)/2));
+          const canvas=document.createElement('canvas');
+          canvas.width=maxSize; canvas.height=maxSize;
+          const ctx=canvas.getContext('2d');
+          ctx.fillStyle='#ffffff';
+          ctx.fillRect(0,0,maxSize,maxSize);
+          ctx.imageSmoothingEnabled=true;
+          ctx.imageSmoothingQuality='high';
+          ctx.drawImage(img,sx,sy,side,side,0,0,maxSize,maxSize);
+          let out=canvas.toDataURL('image/jpeg',quality);
+          // Si aún queda pesada, bajamos un poco más para Firebase Realtime Database.
+          if(out.length>240000){ out=canvas.toDataURL('image/jpeg',0.58); }
+          if(out.length>320000){ reject(new Error('La foto quedó muy pesada. Usa una imagen más liviana.')); return; }
+          resolve(out);
+        }catch(err){ reject(err); }
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let pendingEmpPhoto=null;
+async function prepareEmployeePhoto(input){
+  const f=input?.files?.[0];
+  if(!f){ pendingEmpPhoto=null; return null; }
+  const preview=$('#empPreview');
+  const status=$('#empPhotoStatus');
+  try{
+    if(status) status.textContent='Procesando foto...';
+    const photo=await imageFileToBase64(f,360,0.72);
+    pendingEmpPhoto=photo;
+    if(preview) preview.src=photo;
+    if(status) status.textContent='Foto lista para guardar ✓';
+    return photo;
+  }catch(e){
+    pendingEmpPhoto=null;
+    if(status) status.textContent=e.message||'Error con la foto';
+    alert(e.message||'No se pudo procesar la foto.');
+    input.value='';
+    return null;
+  }
+}
+
+
+const logo='logo-poladent.png';
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const today=()=>new Date().toISOString().slice(0,10);
+const fmt=d=>new Date(d).toLocaleString('es-VE',{dateStyle:'short',timeStyle:'short'});
+const emptyPhoto='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="100%" height="100%" fill="%23dbeafe"/><text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="42" fill="%23005ecb">👤</text></svg>';
+let data=normalizeData(load());
+function normalizeData(d){
+  const seed=defaultSeed(false);
+  d=d && typeof d==='object'?d:{};
+  d.pin=d.pin||seed.pin||'2233';
+  d.employees=Array.isArray(d.employees)?d.employees:seed.employees;
+  d.questions=Array.isArray(d.questions)?d.questions:seed.questions;
+  d.surveys=Array.isArray(d.surveys)?d.surveys:[];
+  d.employees=d.employees.map(e=>({id:e.id||uid(),name:e.name||'Empleado',role:e.role||'',active:e.active!==false,photo:e.photo||emptyPhoto}));
+  d.questions=d.questions.map((q,i)=>({id:q.id||uid(),text:q.text||'Pregunta',type:q.type||'text',options:Array.isArray(q.options)?q.options:[],required:q.required!==false,active:q.active!==false,order:Number(q.order)||i+1}));
+  d.surveys=d.surveys.map(s=>({...s,id:s.id||uid(),date:s.date||new Date().toISOString(),answers:s.answers||{}}));
+  return d;
+}
+function defaultSeed(saveIt=true){ const seed={pin:'2233',employees:[{id:uid(),name:'Yexi',role:'Ventas al mayor',active:true,photo:emptyPhoto},{id:uid(),name:'Tibisay',role:'Área de ventas',active:true,photo:emptyPhoto},{id:uid(),name:'Génesis',role:'Área de ventas',active:true,photo:emptyPhoto}],questions:[{id:uid(),text:'¿Cómo califica la atención recibida?',type:'rating',required:true,active:true,order:1},{id:uid(),text:'¿Fue atendido con amabilidad y respeto?',type:'yesno',required:true,active:true,order:2},{id:uid(),text:'¿Le explicaron bien el producto o servicio?',type:'yesno',required:true,active:true,order:3},{id:uid(),text:'¿Recomendaría Poladent Casa Dental?',type:'yesno',required:true,active:true,order:4},{id:uid(),text:'Comentario adicional',type:'text',required:false,active:true,order:5}],surveys:[]}; if(saveIt) localStorage.setItem(DB,JSON.stringify(seed)); return seed}
+function load(){try{let d=localStorage.getItem(DB); if(d) return JSON.parse(d)}catch(e){} return defaultSeed(true)}
+function save(){saveCloud()}
+function fileToData(input,cb){const f=input.files[0]; if(!f) return; const r=new FileReader(); r.onload=e=>cb(e.target.result); r.readAsDataURL(f)}
+function avgFor(empId){const s=data.surveys.filter(x=>x.employeeId===empId); const nums=s.map(x=>Number(x.rating||0)).filter(Boolean); return nums.length?(nums.reduce((a,b)=>a+b,0)/nums.length):0}
+function ratingStars(n){n=Math.round(Number(n)||0);return '★'.repeat(n)+'☆'.repeat(5-n)}
+
+// ADMIN
+let current='dashboard', editEmp=null, editQ=null;
+
+function getDeviceId(){let id=localStorage.getItem('poladent_device_id'); if(!id){id='dev_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10); localStorage.setItem('poladent_device_id',id)} return id}
+async function getClientMeta(){let ip='No disponible'; try{const r=await fetch('https://api64.ipify.org?format=json',{cache:'no-store'}); const j=await r.json(); ip=j.ip||ip}catch(e){} return {ip,deviceId:getDeviceId(),userAgent:navigator.userAgent||'',platform:navigator.platform||'',language:navigator.language||'',screen:`${screen.width}x${screen.height}`}}
+function todayKey(d){return (d||new Date().toISOString()).slice(0,10)}
+function abuseCount(s){if(!s) return 0; const day=todayKey(s.date); return data.surveys.filter(x=>x.id!==s.id && x.date && todayKey(x.date)===day && ((s.deviceId&&x.deviceId===s.deviceId)||(s.ip&&s.ip!=='No disponible'&&x.ip===s.ip)||(s.clientPhone&&x.clientPhone===s.clientPhone))).length+1}
+function abuseList(){return data.surveys.map(s=>({...s,_abuse:abuseCount(s)})).filter(s=>s._abuse>=3)}
+
+function adminInit(){if(!$('#adminApp')) return; $('#loginLogo').src=logo; $('#sideLogo').src=logo; $('#loginBtn').onclick=()=>{if($('#pin').value===data.pin){$('#login').classList.add('hidden');$('#adminApp').classList.remove('hidden');renderAdmin()}else alert('Clave incorrecta')}; $$('.navBtn').forEach(b=>b.onclick=()=>{current=b.dataset.view; $$('.navBtn').forEach(x=>x.classList.remove('active')); b.classList.add('active'); renderAdmin()}); $('#logoutBtn').onclick=()=>location.reload(); $('#logoAdmin').src=logo; renderAdmin()}
+function renderAdmin(){if(!$('#content'))return; data=normalizeData(data); const titles={dashboard:['Dashboard','Sistema de Encuestas y Calidad de Atención'],employees:['Empleados','Agregar, editar fotos y activar personal'],questions:['Preguntas','Encuesta editable sin tocar código'],history:['Historial','Filtros por empleados, fechas y clientes'],settings:['Configuración','Seguridad, respaldo e importación']}; $('#pageTitle').textContent=titles[current][0]; $('#pageSub').textContent=titles[current][1]; try{$('#content').innerHTML={dashboard:dash(),employees:employees(),questions:questions(),history:history(),settings:settings()}[current]||dash(); bindAdmin()}catch(e){console.error(e); $('#content').innerHTML='<div class="card section"><h2>Sistema cargado</h2><p>Se detectó un dato viejo o incompleto. Presiona el botón para reparar la base local y continuar.</p><button class="btn" id="repairBtn">Reparar datos</button></div>'; setTimeout(()=>{const b=$('#repairBtn'); if(b)b.onclick=()=>{data=normalizeData(data); save(); renderAdmin()}},50)}}
+function dash(){const total=data.surveys.length, ratings=data.surveys.map(s=>+s.rating||0).filter(Boolean), avg=ratings.length?(ratings.reduce((a,b)=>a+b,0)/ratings.length).toFixed(2):'0.00', good=data.surveys.filter(s=>+s.rating>=4).length, bad=data.surveys.filter(s=>+s.rating<=2 || s.badOther==='si').length; const days=[...Array(7)].map((_,i)=>{let d=new Date();d.setDate(d.getDate()-6+i);return d.toISOString().slice(0,10)}); const max=Math.max(1,...days.map(d=>data.surveys.filter(s=>(s.date||'').slice(0,10)===d).length)); return `<div class="grid4"><div class="card stat"><div class="ico">👥</div><div><h3>ENCUESTAS TOTALES</h3><strong>${total}</strong><br><small>Historial acumulado</small></div></div><div class="card stat"><div class="ico" style="background:#16a34a">⭐</div><div><h3>PROMEDIO GENERAL</h3><strong>${avg}</strong><br><small>sobre 5</small></div></div><div class="card stat"><div class="ico" style="background:#6d28d9">😊</div><div><h3>CLIENTES SATISFECHOS</h3><strong>${total?Math.round(good*100/total):0}%</strong><br><small>4 o 5 estrellas</small></div></div><div class="card stat"><div class="ico" style="background:#ef4444">⚠️</div><div><h3>REPORTES NEGATIVOS</h3><strong>${bad}</strong><br><small>Revisar atención</small></div></div></div><div class="layout2"><div class="card section"><div class="sectionHead"><h2>Promedio por empleado</h2><button class="btn small secondary" data-go="history">Ver todos</button></div>${data.employees.map(e=>`<div class="employeeLine"><img class="photo" src="${e.photo||emptyPhoto}"><b>${e.name}</b><div class="bar"><span style="width:${avgFor(e.id)*20}%"></span></div><b>${avgFor(e.id).toFixed(2)}</b></div>`).join('')}</div><div class="card section"><div class="sectionHead"><h2>Encuestas por día</h2></div><div class="chart">${days.map(d=>{let c=data.surveys.filter(s=>(s.date||'').slice(0,10)===d).length;return `<div style="height:${20+c/max*190}px"><span>${c}</span></div>`}).join('')}</div></div></div><div class="layout2"><div class="card section"><div class="sectionHead"><h2>Encuestas recientes</h2><button class="btn small secondary" data-go="history">Ver historial</button></div>${recentTable(data.surveys.slice(-7).reverse())}</div><div class="card section"><div class="sectionHead"><h2>Alertas de atención</h2></div>${[...data.surveys.filter(s=>+s.rating<=2||s.badOther==='si').map(s=>`<p><span class="pill red">Atención</span> ${s.clientName||'Cliente'} reportó sobre <b>${empName(s.employeeId)}</b> · ${fmt(s.date)}</p>`),...abuseList().slice(-6).reverse().map(s=>`<p><span class="pill red">Abuso</span> ${s.clientName||'Cliente'} / ${s.clientPhone||'sin teléfono'} registra <b>${abuseCount(s)}</b> encuestas hoy desde el mismo teléfono/IP.</p>`)].slice(-8).join('')||'<p class="sub">Sin alertas negativas ni abuso detectado.</p>'}</div></div>`}
+function empName(id){return data.employees.find(e=>e.id===id)?.name||'Empleado'}
+function recentTable(rows){return `<div class="tableWrap"><table class="table"><tr><th>Fecha</th><th>Cliente</th><th>Atendido por</th><th>Nota</th><th>Comentario</th><th>Control</th></tr>${rows.map(s=>`<tr><td>${fmt(s.date)}</td><td>${s.clientName||'-'}<br><small>${s.clientPhone||''}</small></td><td>${empName(s.employeeId)}</td><td><span class="stars">${ratingStars(s.rating)}</span></td><td>${s.comment||''}</td><td><small><b>IP:</b> ${s.ip||'-'}<br><b>Disp:</b> ${(s.deviceId||'-').slice(0,18)}<br>${abuseCount(s)>=3?'<span class="pill red">Posible abuso '+abuseCount(s)+' hoy</span>':'<span class="pill green">Normal</span>'}</small></td></tr>`).join('')}</table></div>`}
+function employees(){
+  const preview=editEmp?.photo||emptyPhoto;
+  return `<div class="adminGrid"><div class="card section"><h2>${editEmp?'Editar':'Agregar'} empleado</h2>
+  <div class="photoBox"><img id="empPreview" src="${preview}" class="empPreview"><div><b>Foto del empleado</b><p>Se guarda comprimida en Firebase Realtime Database, sin Storage.</p></div></div>
+  <div class="field"><label>Nombre</label><input id="empName" value="${editEmp?.name||''}" placeholder="Nombre del empleado"></div>
+  <div class="field"><label>Cargo</label><input id="empRole" value="${editEmp?.role||''}" placeholder="Área de ventas, caja, delivery..."></div>
+  <div class="field"><label>Foto</label><input id="empPhoto" type="file" accept="image/*"><small id="empPhotoStatus">Puedes tomar foto o elegir de la galería.</small></div>
+  <div class="field"><label>Estado</label><select id="empActive"><option value="true">Activo</option><option value="false" ${editEmp&& !editEmp.active?'selected':''}>Inactivo</option></select></div>
+  <button class="btn" id="saveEmp">Guardar empleado</button> ${editEmp?'<button class="btn secondary" id="cancelEmp">Cancelar</button>':''}</div>
+  <div class="employeeCards">${data.employees.map(e=>`<div class="card empCard"><div class="empTop"><img src="${e.photo||emptyPhoto}"><div><h3>${e.name}</h3><p>${e.role||''}</p><span class="pill ${e.active?'green':'red'}">${e.active?'Activo':'Inactivo'}</span></div></div><hr style="border:0;border-top:1px solid var(--line)"><p><b>Promedio:</b> ${avgFor(e.id).toFixed(2)} ⭐</p><p><b>Encuestas:</b> ${data.surveys.filter(s=>s.employeeId===e.id).length}</p><div class="actions"><button class="btn small" data-edit-emp="${e.id}">Editar</button><button class="btn small secondary" data-toggle-emp="${e.id}">${e.active?'Inactivar':'Activar'}</button><button class="btn small danger" data-del-emp="${e.id}">Eliminar</button></div></div>`).join('')}</div></div>`}
+
+function questions(){return `<div class="adminGrid"><div class="card section"><h2>${editQ?'Editar':'Nueva'} pregunta</h2><div class="field"><label>Pregunta</label><input id="qText" value="${editQ?.text||''}"></div><div class="field"><label>Tipo de respuesta</label><select id="qType"><option value="rating">Estrellas 1 a 5</option><option value="yesno">Sí / No</option><option value="text">Texto</option><option value="select">Opciones</option></select></div><div class="field"><label>Opciones si aplica, separadas por coma</label><input id="qOptions" value="${(editQ?.options||[]).join(', ')}"></div><div class="field"><label>Orden</label><input id="qOrder" type="number" value="${editQ?.order||data.questions.length+1}"></div><div class="field"><label>Obligatoria</label><select id="qReq"><option value="true">Sí</option><option value="false" ${editQ&&!editQ.required?'selected':''}>No</option></select></div><button class="btn" id="saveQ">Guardar pregunta</button> ${editQ?'<button class="btn secondary" id="cancelQ">Cancelar</button>':''}</div><div class="card section"><h2>Preguntas activas y configurables</h2>${data.questions.sort((a,b)=>a.order-b.order).map(q=>`<div class="questionItem"><b>${q.order}. ${q.text}</b><p>Tipo: ${q.type} · ${q.required?'Obligatoria':'Opcional'} · ${q.active?'Activa':'Inactiva'}</p><div class="actions"><button class="btn small" data-edit-q="${q.id}">Editar</button><button class="btn small secondary" data-toggle-q="${q.id}">${q.active?'Desactivar':'Activar'}</button><button class="btn small danger" data-del-q="${q.id}">Eliminar</button></div></div>`).join('')}</div></div>`}
+function history(){return `<div class="card section"><div class="sectionHead"><h2>Historial de encuestas</h2><div class="actions"><button class="btn small" id="exportCsv">Exportar Excel/CSV</button><button class="btn small secondary" id="clearFilters">Limpiar</button></div></div><div class="filters"><div class="field"><label>Empleado</label><select id="fEmp"><option value="">Todos</option>${data.employees.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}</select></div><div class="field"><label>Desde</label><input type="date" id="fFrom"></div><div class="field"><label>Hasta</label><input type="date" id="fTo"></div><div class="field"><label>Tipo</label><select id="fType"><option value="">Todas</option><option value="good">Buenas 4-5</option><option value="regular">Regular 3</option><option value="bad">Malas 1-2/Quejas</option><option value="abuse">Posible abuso</option></select></div><button class="btn" id="applyFilter">Filtrar</button></div><div id="histOut" style="margin-top:14px"></div></div>`}
+function settings(){return `<div class="adminGrid"><div class="card section"><h2>Configuración</h2><div class="field"><label>Cambiar clave administrador</label><input id="newPin" placeholder="Nueva clave"></div><button class="btn" id="savePin">Guardar clave</button><hr style="border:0;border-top:1px solid var(--line);margin:20px 0"><button class="btn secondary" id="backup">Descargar respaldo JSON</button><div class="field" style="margin-top:12px"><label>Restaurar respaldo JSON</label><input type="file" id="restore" accept="application/json"></div><button class="btn danger" id="wipe">Borrar encuestas de prueba</button><button class="btn secondary" id="resetBase" style="margin-top:10px">Reiniciar base inicial</button></div><div class="card section"><h2>Logo Poladent</h2><img src="${logo}" style="max-width:240px;width:100%"><p>El logo ya está integrado en el panel administrador y encuesta del cliente.</p><p><b>Modo nube:</b> conectado a Firebase Realtime Database sin usar Storage. Las fotos de empleados se guardan comprimidas en Base64.</p></div></div>`}
+let histRows=[];
+function renderHist(){let rows=[...data.surveys]; const emp=$('#fEmp')?.value, from=$('#fFrom')?.value, to=$('#fTo')?.value, type=$('#fType')?.value; if(emp) rows=rows.filter(s=>s.employeeId===emp); if(from) rows=rows.filter(s=>(s.date||'').slice(0,10)>=from); if(to) rows=rows.filter(s=>(s.date||'').slice(0,10)<=to); if(type==='good') rows=rows.filter(s=>+s.rating>=4); if(type==='regular') rows=rows.filter(s=>+s.rating===3); if(type==='bad') rows=rows.filter(s=>+s.rating<=2||s.badOther==='si'); if(type==='abuse') rows=rows.filter(s=>abuseCount(s)>=3); histRows=rows.reverse(); $('#histOut').innerHTML=recentTable(histRows)}
+function bindAdmin(){ $$('[data-go]').forEach(b=>b.onclick=()=>{current=b.dataset.go; renderAdmin()}); if(current==='employees'){
+    pendingEmpPhoto=null;
+    const photoInput=$('#empPhoto');
+    if(photoInput) photoInput.onchange=()=>prepareEmployeePhoto(photoInput);
+    $('#saveEmp').onclick=async()=>{
+      const btn=$('#saveEmp');
+      try{
+        btn.disabled=true; btn.textContent='Guardando...';
+        if(photoInput && photoInput.files && photoInput.files[0] && !pendingEmpPhoto){
+          await prepareEmployeePhoto(photoInput);
+        }
+        const photo=pendingEmpPhoto || (editEmp?editEmp.photo:emptyPhoto);
+        const obj={
+          name:($('#empName').value||'Empleado').trim(),
+          role:($('#empRole').value||'').trim(),
+          active:$('#empActive').value==='true',
+          photo:photo||emptyPhoto,
+          updatedAt:new Date().toISOString()
+        };
+        if(editEmp){ Object.assign(editEmp,obj); }
+        else{ data.employees.push({id:uid(),createdAt:new Date().toISOString(),...obj}); }
+        editEmp=null; pendingEmpPhoto=null;
+        save();
+        alert('Empleado guardado correctamente.');
+        renderAdmin();
+      }catch(e){
+        alert('No se pudo guardar el empleado: '+(e.message||e));
+      }finally{
+        if(btn){btn.disabled=false; btn.textContent='Guardar empleado';}
+      }
+    };
+    $('#cancelEmp')&&($('#cancelEmp').onclick=()=>{editEmp=null;pendingEmpPhoto=null;renderAdmin()});
+    $$('[data-edit-emp]').forEach(b=>b.onclick=()=>{editEmp=data.employees.find(e=>e.id===b.dataset.editEmp);pendingEmpPhoto=null;renderAdmin()});
+    $$('[data-toggle-emp]').forEach(b=>b.onclick=()=>{let e=data.employees.find(e=>e.id===b.dataset.toggleEmp);e.active=!e.active;e.updatedAt=new Date().toISOString();save();renderAdmin()});
+    $$('[data-del-emp]').forEach(b=>b.onclick=()=>{if(confirm('¿Eliminar empleado?')){data.employees=data.employees.filter(e=>e.id!==b.dataset.delEmp);save();renderAdmin()}})
+  } if(current==='questions'){ if(editQ) $('#qType').value=editQ.type; $('#saveQ').onclick=()=>{let obj={text:$('#qText').value,type:$('#qType').value,options:$('#qOptions').value.split(',').map(x=>x.trim()).filter(Boolean),order:+$('#qOrder').value||1,required:$('#qReq').value==='true',active:true}; if(editQ) Object.assign(editQ,obj); else data.questions.push({id:uid(),...obj}); editQ=null;save();renderAdmin()}; $('#cancelQ')&&($('#cancelQ').onclick=()=>{editQ=null;renderAdmin()}); $$('[data-edit-q]').forEach(b=>b.onclick=()=>{editQ=data.questions.find(q=>q.id===b.dataset.editQ);renderAdmin()}); $$('[data-toggle-q]').forEach(b=>b.onclick=()=>{let q=data.questions.find(q=>q.id===b.dataset.toggleQ);q.active=!q.active;save();renderAdmin()}); $$('[data-del-q]').forEach(b=>b.onclick=()=>{if(confirm('¿Eliminar pregunta?')){data.questions=data.questions.filter(q=>q.id!==b.dataset.delQ);save();renderAdmin()}})} if(current==='history'){renderHist(); $('#applyFilter').onclick=renderHist; $('#clearFilters').onclick=()=>renderAdmin(); $('#exportCsv').onclick=()=>downloadCSV(histRows.length?histRows:data.surveys)} if(current==='settings'){ $('#savePin').onclick=()=>{if($('#newPin').value){data.pin=$('#newPin').value;save();alert('Clave actualizada')}}; $('#backup').onclick=()=>downloadJSON(); $('#restore').onchange=()=>fileToData($('#restore'),txt=>{try{data=JSON.parse(atob(txt.split(',')[1]));save();alert('Restaurado');location.reload()}catch(e){alert('Archivo no válido')}}); $('#wipe').onclick=()=>{if(confirm('¿Borrar todas las encuestas?')){data.surveys=[];save();renderAdmin()}}; $('#resetBase').onclick=()=>{if(confirm('Esto restaura empleados y preguntas iniciales. ¿Continuar?')){data=defaultSeed(true); save(); renderAdmin()}}}}
+function downloadCSV(rows){let csv='Fecha,Cliente,Telefono,Ciudad,Empleado,Nota,Comentario,Reporte adicional,IP,ID dispositivo,Navegador,Veces detectadas hoy\n'+rows.map(s=>`"${fmt(s.date)}","${s.clientName||''}","${s.clientPhone||''}","${s.city||''}","${empName(s.employeeId)}","${s.rating||''}","${(s.comment||'').replaceAll('\"','')}","${(s.badComment||'').replaceAll('\"','')}","${s.ip||''}","${s.deviceId||''}","${(s.userAgent||'').replaceAll('\"','')}","${abuseCount(s)}"`).join('\n'); let a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='poladent_historial_encuestas.csv'; a.click()}
+function downloadJSON(){let a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})); a.download='respaldo_poladent_feedback.json'; a.click()}
+
+// CLIENT
+let step=0, form={answers:{}};
+function clientInit(){if(!$('#clientApp')) return; $('#clientLogo').src=logo; renderStep()}
+function renderStep(){const box=$('#clientContent'), qs=data.questions.filter(q=>q.active).sort((a,b)=>a.order-b.order); const activeEmp=data.employees.filter(e=>e.active); if(step===0) box.innerHTML=`<h2 class="stepTitle">Tu opinión nos ayuda a mejorar</h2><p class="sub">Completa esta encuesta rápida de Poladent Casa Dental.</p><label class="anonBox"><input type="checkbox" id="anonymous" ${form.anonymous?'checked':''}> Prefiero realizar esta encuesta de forma anónima</label><div id="clientDataBox" class="${form.anonymous?'hidden':''}"><div class="field"><label>Nombre y apellido <span class="optional">(Opcional)</span></label><input id="cName" value="${form.clientName||''}" placeholder="Nombre y apellido"></div><div class="field"><label>Número de teléfono <span class="optional">(Opcional)</span></label><input id="cPhone" value="${form.clientPhone||''}" placeholder="Ej: 0414-0000000"></div></div><div class="field"><label>Ciudad <span class="optional">(Opcional)</span></label><input id="cCity" value="${form.city||''}" placeholder="Ciudad"></div><p class="privacyNote">Tu opinión puede ser anónima. Tus datos solo se usarán para dar seguimiento si es necesario y nunca serán compartidos.</p><button class="btn" id="next">Continuar</button>`; if(step===1) box.innerHTML=`<h2 class="stepTitle">¿Quién te atendió?</h2><p class="sub">Selecciona la persona principal que te atendió.</p><div class="empSelect">${activeEmp.map(e=>`<div class="empChoice ${form.employeeId===e.id?'selected':''}" data-emp="${e.id}"><img src="${e.photo||emptyPhoto}"><b>${e.name}</b><small>${e.role||''}</small></div>`).join('')}</div><div class="stepActions"><button class="btn secondary" id="back">Atrás</button><button class="btn" id="next">Continuar</button></div>`; if(step===2) box.innerHTML=`<h2 class="stepTitle">Evalúa la atención</h2><p class="sub">Responde con sinceridad. Tu opinión es confidencial.</p>${qs.map(q=>qHtml(q)).join('')}<div class="field"><label>¿Alguna otra persona te atendió de forma inadecuada o te hizo sentir incómodo/a?</label><select id="badOther"><option value="no" ${form.badOther!=='si'?'selected':''}>No</option><option value="si" ${form.badOther==='si'?'selected':''}>Sí</option></select></div><div id="badBox" class="${form.badOther==='si'?'':'hidden'}"><label class="miniLabel">¿Quién fue? Toca la foto de la persona</label><div class="empSelect reportSelect">${activeEmp.map(e=>`<div class="empChoice reportChoice ${form.badEmployeeId===e.id?'selected':''}" data-bademp="${e.id}"><img src="${e.photo||emptyPhoto}"><b>${e.name}</b><small>${e.role||''}</small></div>`).join('')}</div><div class="field"><label>Explique lo ocurrido</label><textarea id="badComment">${form.badComment||''}</textarea></div></div><div class="stepActions"><button class="btn secondary" id="back">Atrás</button><button class="btn success" id="send">Enviar evaluación</button></div>`; if(step===3) box.innerHTML=`<div class="thanks"><h1>¡Gracias por tu opinión!</h1><p>Tu comentario nos ayuda a mejorar cada día.</p><button class="btn" onclick="location.reload()">Nueva encuesta</button></div>`; bindClient()}
+function qHtml(q){if(q.type==='rating') return `<div class="field"><label>${q.text}</label><div class="ratingBtns" data-q="${q.id}">${[1,2,3,4,5].map(n=>`<button class="rate ${form.answers[q.id]==n?'active':''}" data-rate="${n}">★</button>`).join('')}</div></div>`; if(q.type==='yesno') return `<div class="field"><label>${q.text}</label><select data-qinput="${q.id}"><option value="">Seleccionar</option><option ${form.answers[q.id]==='Sí'?'selected':''}>Sí</option><option ${form.answers[q.id]==='No'?'selected':''}>No</option></select></div>`; if(q.type==='select') return `<div class="field"><label>${q.text}</label><select data-qinput="${q.id}"><option value="">Seleccionar</option>${(q.options||[]).map(o=>`<option ${form.answers[q.id]===o?'selected':''}>${o}</option>`).join('')}</select></div>`; return `<div class="field"><label>${q.text}</label><textarea data-qinput="${q.id}">${form.answers[q.id]||''}</textarea></div>`}
+function bindClient(){ const anon=$('#anonymous'); if(anon){anon.onchange=()=>{form.anonymous=anon.checked; if(form.anonymous){form.clientName='';form.clientPhone='';} renderStep()}} $('#next')&&($('#next').onclick=()=>{if(step===0){form.anonymous=!!$('#anonymous')?.checked;form.clientName=form.anonymous?'':($('#cName')?.value||'');form.clientPhone=form.anonymous?'':($('#cPhone')?.value||'');form.city=$('#cCity')?.value||'';step=1}else if(step===1){if(!form.employeeId)return alert('Selecciona quién te atendió');step=2}renderStep()}); $('#back')&&($('#back').onclick=()=>{step--;renderStep()}); $$('.empChoice').forEach(x=>x.onclick=()=>{form.employeeId=x.dataset.emp;renderStep()}); $$('.rate').forEach(b=>b.onclick=e=>{e.preventDefault();form.answers[b.parentElement.dataset.q]=b.dataset.rate; form.rating=b.dataset.rate; renderStep()}); $$('[data-qinput]').forEach(i=>i.onchange=()=>form.answers[i.dataset.qinput]=i.value); $('#badOther')&&($('#badOther').onchange=()=>{form.badOther=$('#badOther').value; if(form.badOther!=='si'){form.badEmployeeId='';form.badComment='';} renderStep()}); $$('.reportChoice').forEach(x=>x.onclick=()=>{form.badEmployeeId=x.dataset.bademp; form.badOther='si'; form.badComment=$('#badComment')?.value||form.badComment||''; renderStep()}); $('#badComment')&&($('#badComment').oninput=()=>form.badComment=$('#badComment').value); $('#send')&&($('#send').onclick=async()=>{ $('#send').disabled=true; $('#send').textContent='Enviando...'; $$('[data-qinput]').forEach(i=>form.answers[i.dataset.qinput]=i.value); form.badOther=$('#badOther')?.value||form.badOther||'no'; form.badComment=$('#badComment')?.value||form.badComment||''; const ratingQ=data.questions.find(q=>q.type==='rating'&&q.active); const commentQ=data.questions.find(q=>q.type==='text'&&q.active); const meta=await getClientMeta(); const survey={id:uid(),date:new Date().toISOString(),anonymous:!!form.anonymous,clientName:form.anonymous?'':form.clientName,clientPhone:form.anonymous?'':form.clientPhone,city:form.city,employeeId:form.employeeId,rating:form.rating||form.answers[ratingQ?.id]||'',comment:form.answers[commentQ?.id]||'',answers:form.answers,badOther:form.badOther,badEmployeeId:form.badEmployeeId||'',badComment:form.badComment||'',...meta}; survey.abuseToday=abuseCount(survey); data.surveys.push(survey); save(); step=3; renderStep()})}
+window.addEventListener('DOMContentLoaded',()=>{firebaseInit();adminInit();clientInit()});
