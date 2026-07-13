@@ -1,0 +1,10 @@
+POLADENT FEEDBACK V7.4.2
+
+Cambios:
+- La elección entre encuesta anónima o con datos aparece al comenzar.
+- El campo "Ciudad donde vives" aparece siempre, tanto en modo anónimo como identificado.
+- La ciudad no se marca como obligatoria.
+- Si se elige "Con mis datos", aparecen nombre y teléfono; el teléfono sigue siendo opcional.
+- Se eliminó la elección de anonimato del final de la encuesta.
+- Se mantienen las estrellas acumulativas y los iconos mejorados de la V7.4.1.
+- Se mantiene Firebase, empleados, fotos, sedes, canales, QR, enlaces, historial y seguridad.
